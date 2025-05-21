@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -17,22 +18,29 @@ import (
 
 // Handler - точка входа для Vercel бессерверных функций
 func Handler(w http.ResponseWriter, r *http.Request) {
+	// Логирование для отладки
+	log.Printf("Получен запрос: %s %s", r.Method, r.URL.Path)
+
 	// Загрузка переменных окружения
 	godotenv.Load()
 
-	// Обработка путей - для Vercel важно корректно обрабатывать маршруты
-	// Если запрос идет на /api/pet-and-health, удаляем этот префикс
-	// Это позволит использовать те же маршруты, что и в локальной версии
-	if strings.HasPrefix(r.URL.Path, "/api/pet-and-health") {
-		r.URL.Path = r.URL.Path[18:] // Удаляем "/api/pet-and-health"
-	} else if strings.HasPrefix(r.URL.Path, "/api") {
-		r.URL.Path = r.URL.Path[4:] // Удаляем "/api"
+	// ВАЖНО: Корректируем путь для Vercel
+	originalPath := r.URL.Path
+
+	// Удаляем "/api" в начале пути - это критически важно для Vercel
+	if strings.HasPrefix(originalPath, "/api") {
+		r.URL.Path = strings.TrimPrefix(originalPath, "/api")
 	}
 
-	// Если после удаления префикса путь пустой, установим его в "/"
+	// Если путь пустой, установим "/"
 	if r.URL.Path == "" {
 		r.URL.Path = "/"
 	}
+
+	// Добавляем префикс "/api/pet-and-health" для соответствия вашей маршрутизации
+	r.URL.Path = "/api/pet-and-health" + r.URL.Path
+
+	log.Printf("Измененный путь: %s", r.URL.Path)
 
 	// Создаем контекст для MongoDB
 	ctx := context.Background()
@@ -41,6 +49,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	username := os.Getenv("MONGO_USERNAME")
 	password := os.Getenv("MONGO_PASSWORD")
 	if username == "" || password == "" {
+		log.Printf("Ошибка: отсутствуют учетные данные MongoDB")
 		http.Error(w, "MONGO_USERNAME или MONGO_PASSWORD не установлены", http.StatusInternalServerError)
 		return
 	}
@@ -53,6 +62,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	clientOptions.SetConnectTimeout(10 * time.Second)
 	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
+		log.Printf("Ошибка подключения к MongoDB: %v", err)
 		http.Error(w, "Ошибка подключения к MongoDB: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -61,6 +71,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	// Проверяем соединение с MongoDB
 	err = client.Ping(ctx, nil)
 	if err != nil {
+		log.Printf("Не удалось подключиться к MongoDB: %v", err)
 		http.Error(w, "Не удалось установить соединение с MongoDB: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -75,5 +86,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Обрабатываем запрос с помощью маршрутизатора
+	log.Printf("Передаем запрос маршрутизатору: %s %s", r.Method, r.URL.Path)
 	router.ServeHTTP(w, r)
 }
